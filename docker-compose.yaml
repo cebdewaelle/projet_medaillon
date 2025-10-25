@@ -1,0 +1,168 @@
+x-airflow-common: &airflow-common
+  build: ./airflow
+  environment:
+    - AIRFLOW__CORE__EXECUTOR=${AIRFLOW__CORE__EXECUTOR}
+    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN}
+    - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW__CORE__FERNET_KEY}
+    - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW__WEBSERVER__SECRET_KEY}
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./data:/opt/airflow/data
+
+services:
+  # -----------------------
+  # Postgres pour Airflow
+  # -----------------------
+  postgres_airflow:
+    image: postgres:16
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER_AIRFLOW}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_AIRFLOW}
+      POSTGRES_DB: ${POSTGRES_DB_AIRFLOW}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_airflow_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER_AIRFLOW} -d ${POSTGRES_DB_AIRFLOW}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  pgadmin_dev:
+    image: dpage/pgadmin4
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+    ports:
+      - "8085:80"
+    depends_on:
+      - postgres_airflow
+    volumes:
+      - ./config_pgadmin_dev.json:/pgadmin4/servers.json
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres_airflow:
+        condition: service_healthy
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      postgres_airflow:
+        condition: service_healthy
+
+  fastapi:
+    build: ./api
+    container_name: fastapi
+    depends_on:
+      - neo4j
+    ports:
+      - "8000:8000"
+    networks:
+      - data_network
+
+
+  neo4j:
+    image: neo4j:5.25
+    container_name: neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=none
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - data_network
+
+  marquez-db:
+    image: postgres:15
+    container_name: marquez-db
+    environment:
+      - POSTGRES_USER=marquez
+      - POSTGRES_PASSWORD=marquez
+      - POSTGRES_DB=marquez
+    volumes:
+      - marquez_data:/var/lib/postgresql/data
+    networks:
+      - data_network
+
+  marquez:
+    image: marquezproject/marquez:latest
+    container_name: marquez
+    ports:
+      - "5000:5000"
+    environment:
+      - MARQUEZ_DB_HOST=marquez-db
+      - MARQUEZ_DB_PORT=5432
+      - MARQUEZ_DB_USER=marquez
+      - MARQUEZ_DB_PASSWORD=marquez
+      - MARQUEZ_DB_NAME=marquez
+    depends_on:
+      - marquez-db
+    networks:
+      - data_network
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - data_network
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_SECURITY_ADMIN_USER=
+      - GF_SECURITY_ADMIN_PASSWORD=
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - data_network
+
+
+networks:
+  data_network:
+    driver: bridge
+
+volumes:
+  grafana_data:
+  neo4j_data:
+  marquez_data:
+  postgres_airflow_data:
+
+
+
+
+
+# airflow:
+#   image: apache/airflow:2.9.1
+#   env_file: .env
+#   environment:
+#     AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+#     AIRFLOW__LOGGING__LOGGING_LEVEL: "INFO"
+#     AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.default"  # Disable API auth
+#     AIRFLOW__WEBSERVER__AUTHENTICATE: "False"  # Disable webserver auth
+#     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "True"  # Optional: expose config
+#   command: standalone
+#   ports: ["8080:8080"]
