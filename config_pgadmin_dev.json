@@ -1,0 +1,13 @@
+{
+    "Servers": {
+        "1": {
+            "Name": "PostgreSQL Service",
+            "Group": "Docker Servers",
+            "Port": 5432,
+            "Username": "airflow_user",
+            "Host": "postgres_airflow",
+            "SSLMode": "prefer",
+            "MaintenanceDB": "airflow_db"
+        }
+    }
+}
